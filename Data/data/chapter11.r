@@ -1,0 +1,99 @@
+### log-density of the multivariate normal distribution
+ldmvnorm<-function(X,mu,Sigma,iSigma=solve(Sigma),dSigma=det(Sigma)) 
+{
+  Y<-t( t(X)-mu)
+  sum(diag(-.5*t(Y)%*%Y%*%iSigma))  -
+  .5*(  prod(dim(X))*log(2*pi) +     dim(X)[1]*log(dSigma) )
+                                 
+}
+###
+
+
+### sample from the multivariate normal distribution
+rmvnorm<-function(n,mu,Sigma)
+{
+  p<-length(mu)
+  res<-matrix(0,nrow=n,ncol=p)
+  if( n>0 & p>0 )
+  {
+    E<-matrix(rnorm(n*p),n,p)
+    res<-t(  t(E%*%chol(Sigma)) +c(mu))
+  }
+  res
+}
+###
+
+
+### sample from the Wishart distribution
+rwish<-function(n,nu0,S0)
+{
+  sS0 <- chol(S0)
+  S<-array( dim=c( dim(S0),n ) )
+  for(i in 1:n)
+  {
+     Z <- matrix(rnorm(nu0 * dim(S0)[1]), nu0, dim(S0)[1]) %*% sS0
+     S[,,i]<- t(Z)%*%Z
+  }
+  S[,,1:n]
+}
+###
+
+
+### tumor example
+XY.tumor<-dget("./XY.tumor");
+
+Y <- XY.tumor$Y;
+X <- XY.tumor$X;
+m <- dim(Y)[1];
+p <- dim(X)[2];
+
+### priors
+BETA <- NULL;
+for (j in 1:m) {
+  BETA <- rbind(BETA, lm(log(Y[j, ] + 1 / 20)~ - 1 + X[, , j])$coef)
+}
+
+mu0 <- apply(BETA, 2, mean);
+S0 <- cov(BETA);
+eta0 <- p + 2;
+iL0 <- iSigma <- solve(S0);
+THETA.post <- NULL;
+
+### MCMC
+for (s in 1 : 50000) {
+  ## update theta
+  Lm <- solve(iL0 + m * iSigma);
+  mum <- Lm  %*% (iL0 %*% mu0 + iSigma %*% apply(BETA, 2, sum));
+  theta <- t(rmvnorm(1, mum, Lm));
+  
+  ## update Sigma
+  mtheta <- matrix(theta, m, p, byrow = TRUE);
+  iSigma <- rwish(1, eta0 + m, solve(S0 + t(BETA - mtheta) %*% (BETA - mtheta)));
+  
+  ## update beta
+  Sigma <- solve(iSigma);
+  dSigma <- det(Sigma);
+  
+  for (j in 1 : m) {
+    beta.p <- t(rmvnorm(1, BETA[j, ], 0.5 * Sigma));
+    
+    lr <- sum(dpois(Y[j, ], exp(X[, , j] %*% beta.p), log = TRUE) - dpois(Y[j, ], exp(X[, , j] %*% BETA[j, ]), log = TRUE)) + ldmvnorm(t(beta.p), theta, Sigma, iSigma = iSigma, dSigma = dSigma) - ldmvnorm(t(BETA[j, ]), theta, Sigma , iSigma = iSigma, dSigma = dSigma);
+
+    if (log(runif(1)) < lr) {
+      BETA[j, ] <- beta.p;
+    }
+  }
+  ## store some output
+  if (s %% 10==0) {
+    THETA.post <- rbind(THETA.post, t(theta))
+  }
+  ##
+}
+
+
+
+
+
+
+
+
